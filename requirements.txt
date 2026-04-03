@@ -1,6 +1,4 @@
 streamlit
 yfinance
 pandas
-pandas-ta
 scikit-learn
-numpy==1.26.4
