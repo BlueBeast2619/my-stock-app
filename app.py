@@ -45,10 +45,10 @@ def build_model(symbol, window):
     model = Ridge(alpha=1.0)
     model.fit(data[features], data['Target'])
     
-    # CRITICAL FIX: Convert to float to avoid TypeError
-    latest_row = df[features].tail(1)
-    current_price = float(df['Close'].iloc[-1]) 
-    prediction = float(model.predict(latest_row)[0])
+    # FINAL CRITICAL FIX: .values.flatten() handles multi-column issues
+    latest_row = data[features].tail(1)
+    current_price = float(df['Close'].values.flatten()[-1]) 
+    prediction = float(model.predict(latest_row).flatten()[0])
     
     return current_price, prediction, df
 
@@ -74,7 +74,7 @@ while True:
             st.caption(f"Last Updated: {datetime.now().strftime('%H:%M:%S')}")
     
     else:
-        st.warning("Connecting to market data... (If this persists, check the 'Manage App' logs for Rate Limits)")
+        st.warning("Connecting to market data... (If this persists, Yahoo Finance may be rate-limiting the connection. Wait 15 mins.)")
 
     # Wait 60 seconds before refreshing
     time.sleep(60)
