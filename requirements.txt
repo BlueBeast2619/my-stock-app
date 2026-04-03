@@ -1,6 +1,6 @@
-yfinance==0.2.52
-pandas==2.2.3
-pandas-ta==0.3.14b0
-scikit-learn==1.6.1
-streamlit==1.42.0
+yfinance
+pandas
+pandas-ta
+scikit-learn
+streamlit
 numpy==1.26.4
