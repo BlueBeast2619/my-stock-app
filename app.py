@@ -1,104 +1,106 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from sklearn.linear_model import Ridge
 import numpy as np
+from sklearn.linear_model import Ridge
 import time
-from datetime import datetime
 
-# --- 1. APP CONFIGURATION ---
-st.set_page_config(page_title="Pro Stock Predictor", layout="wide")
-st.title("📈 AI Stock Predictor (Fast-Load Edition)")
+# --- PWA CONFIGURATION ---
+# This must be the very first Streamlit command
+st.set_page_config(page_title="Vigilant Pulse AI", page_icon="📈", layout="wide")
 
-ticker_list = ["QQQ", "SPY", "NVDA", "TSLA", "AAPL", "BTC-USD", "SLV"]
-selected_ticker = st.sidebar.selectbox("Select Ticker", ticker_list)
-prediction_minutes = st.sidebar.slider("Minutes into Future", 1, 15, 5)
+# Inject Manifest for Android/Bubblewrap
+# We use a try/except so if the file is missing, the app doesn't hang
+try:
+    st.markdown(
+        f'<link rel="manifest" href="/app/static/manifest.json">',
+        unsafe_allow_html=True
+    )
+except Exception:
+    pass
 
-# --- 2. THE CACHE (Speed Improvement) ---
-@st.cache_data(ttl=3600)  # Downloads historical data only once per hour
-def get_historical_data(symbol):
-    return yf.download(symbol, period="5d", interval="1m", prepost=True, progress=False)
+# --- CORE FUNCTIONS ---
 
-# --- 3. THE ENGINE ---
-def build_model(symbol, window):
-    # Fetch data using the cache
-    df_raw = get_historical_data(symbol)
-    
-    if df_raw.empty:
-        return None, None
+@st.cache_data(ttl=60)
+def fetch_data(ticker):
+    data = yf.download(ticker, period="1d", interval="1m", prepost=True)
+    if data.empty:
+        return None
+    # Fix for MultiIndex columns in newer yfinance versions
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+    return data
 
-    # Fix MultiIndex column issue immediately
-    df = df_raw.copy()
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    # Technical Indicators
+def calculate_indicators(df):
+    df = df.copy()
+    # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    df['SMA_9'] = df['Close'].rolling(window=9).mean()
-    df['Volatility'] = df['Close'].rolling(window=15).std()
+    # VWAP
+    df['VWAP'] = (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
+    
+    # Momentum
     df['Momentum'] = df['Close'].diff(10)
-    
-    # Volume Pressure
-    df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
-    df['Vol_Pressure'] = df['Volume'] / df['Vol_Avg']
-    
-    # Target
-    df['Target'] = df['Close'].shift(-window)
-    
-    # Features
-    features = ['Close', 'RSI', 'SMA_9', 'Volatility', 'Momentum', 'Vol_Pressure']
-    data = df.dropna()
-    
-    if data.empty:
-        return None, df
+    return df.dropna()
 
+def predict_price(df):
+    # Prepare features for the next 5 minutes
+    df['Target'] = df['Close'].shift(-5)
+    train = df.dropna()
+    
+    X = train[['Close', 'RSI', 'VWAP', 'Momentum']]
+    y = train['Target']
+    
     model = Ridge(alpha=1.0)
-    model.fit(data[features], data['Target'])
+    model.fit(X, y)
     
-    # Extract Final Metrics
-    latest_row = data[features].tail(1)
-    
-    metrics = {
-        "price": float(df['Close'].values.flatten()[-1]),
-        "vol_p": float(df['Vol_Pressure'].values.flatten()[-1]),
-        "momentum": float(df['Momentum'].values.flatten()[-1]),
-        "prediction": float(model.predict(latest_row).flatten()[0])
-    }
-    
-    return metrics, df
+    current_features = df[['Close', 'RSI', 'VWAP', 'Momentum']].iloc[[-1]]
+    prediction = model.predict(current_features)[0]
+    return prediction
 
-# --- 4. THE DASHBOARD ---
-placeholder = st.empty()
+# --- USER INTERFACE ---
 
-while True:
-    m, full_df = build_model(selected_ticker, prediction_minutes)
+st.title("📈 Vigilant Pulse AI")
+st.sidebar.header("Settings")
+symbol = st.sidebar.text_input("Enter Ticker (e.g. QQQ, TSLA)", value="QQQ").upper()
+
+if st.sidebar.button("Refresh Data"):
+    st.rerun()
+
+# Disclaimer for Play Store Compliance
+st.sidebar.info("⚠️ Not financial advice. For educational purposes only.")
+
+# --- MAIN LOGIC ---
+with st.spinner(f"Analyzing {symbol}..."):
+    raw_data = fetch_data(symbol)
     
-    if m is not None:
-        with placeholder.container():
-            diff = m['prediction'] - m['price']
+    if raw_data is not None:
+        processed_data = calculate_indicators(raw_data)
+        
+        if len(processed_data) > 20:
+            current_price = processed_data['Close'].iloc[-1]
+            pred_price = predict_price(processed_data)
+            change = pred_price - current_price
             
             # Metrics Row
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Current Price", f"${m['price']:.2f}")
-            
-            m_color = "normal" if m['momentum'] > 0 else "inverse"
-            c2.metric("10m Momentum", f"{m['momentum']:.2f}", delta_color=m_color)
-            
-            c3.metric("Vol Pressure", f"{m['vol_p']:.2f}x")
-            c4.metric(f"Target (+{prediction_minutes}m)", f"${m['prediction']:.2f}", f"{diff:.2f}")
-            
-            # Chart Row
-            st.subheader(f"Live {selected_ticker} Analysis")
-            st.line_chart(full_df['Close'].tail(60))
-            
-            st.caption(f"Last Updated: {datetime.now().strftime('%H:%M:%S')} | Cache active for 1 hour.")
-    
-    else:
-        st.warning("Fetching Market Data... (Check logs if this stays for >2 mins)")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Current Price", f"${current_price:.2f}")
+            col2.metric("Predicted (5m)", f"${pred_price:.2f}", f"{change:.2f}")
+            col3.metric("RSI", f"{processed_data['RSI'].iloc[-1]:.1f}")
 
-    time.sleep(60)
+            # Chart
+            st.line_chart(processed_data['Close'])
+            
+            st.success("AI Model Updated Successfully")
+        else:
+            st.warning("Waiting for more market data to build prediction...")
+    else:
+        st.error("Market data unavailable. Check the ticker or market hours.")
+
+# Auto-refresh every 30 seconds
+time.sleep(30)
+st.rerun()
