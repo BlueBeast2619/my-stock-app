@@ -13,7 +13,7 @@
   "backgroundColor": "#0E1117",
   "enableNotifications": true,
   "startUrl": "/",
-  "iconUrl": "file:///C:/Users/abhis/VigilantPulseApp/.streamlitstaticicon-512.png.—",
+  "iconUrl": "file:///C:/Users/abhis/VigilantPulseApp/.streamlit/staticicon-512.png.—",
   "splashScreenFadeOutDuration": 300,
   "signingKey": {
     "path": "C:\\Users\\abhis\\VigilantPulseApp\\android.keystore",
